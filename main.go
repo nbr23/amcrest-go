@@ -25,6 +25,13 @@ type telegram struct {
 	chat_id string
 }
 
+type event struct {
+	method string
+	action string
+	code   string
+	time   string
+}
+
 func encryptPassword(username, password, random, realm string) string {
 	h1 := md5.New()
 	b1 := []byte(fmt.Sprintf("%s:%s:%s", username, realm, password))
@@ -35,20 +42,28 @@ func encryptPassword(username, password, random, realm string) string {
 	return fmt.Sprintf("%X", h1.Sum(nil))
 }
 
-func (a *amcrest) login() {
-
-	// First request, to get the random bits
-	data := map[string]interface{}{"params": map[string]interface{}{"userName": a.username, "password": "", "clientType": "Web3.0", "loginType": "Direct"}, "id": a.id, "method": "global.login"}
+func (a *amcrest) rcpPost(path string, data map[string]interface{}) *http.Response {
 	json_data, err := json.Marshal(data)
 	if err != nil {
 		panic(err)
 	}
-
-	resp, err := http.Post(fmt.Sprintf("%s/RPC2_Login", a.host), "application/x-www-form-urlencoded", bytes.NewBuffer(json_data))
+	resp, err := http.Post(fmt.Sprintf("%s%s", a.host, path), "application/x-www-form-urlencoded", bytes.NewBuffer(json_data))
 	a.id++
 	if err != nil {
 		panic(err)
 	}
+	return resp
+}
+
+func (a *amcrest) login() {
+
+	// First request, to get the random bits
+	resp := a.rcpPost("/RPC2_Login", map[string]interface{}{
+		"method":  "global.login",
+		"params":  map[string]interface{}{"userName": a.username, "password": "", "clientType": "Web3.0", "loginType": "Direct"},
+		"id":      a.id,
+		"session": a.session,
+	})
 
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
@@ -59,24 +74,17 @@ func (a *amcrest) login() {
 	var result map[string]interface{}
 	json.Unmarshal(body, &result)
 	params := result["params"].(map[string]interface{})
-	rand := fmt.Sprintf("%v", params["random"])
-	realm := fmt.Sprintf("%v", params["realm"])
-	session := fmt.Sprintf("%v", result["session"])
+	a.session = result["session"].(string)
 
-	hash := encryptPassword(a.username, a.password, rand, realm)
+	hash := encryptPassword(a.username, a.password, params["random"].(string), params["realm"].(string))
 
 	// second request, actual login
-	data = map[string]interface{}{"params": map[string]interface{}{"userName": a.username, "password": hash, "clientType": "Web3.0", "loginType": "Direct"}, "id": a.id, "method": "global.login", "session": session}
-	json_data, err = json.Marshal(data)
-	if err != nil {
-		panic(err)
-	}
-
-	resp2, err := http.Post(fmt.Sprintf("%s/RPC2_Login", a.host), "application/x-www-form-urlencoded", bytes.NewBuffer(json_data))
-	a.id++
-	if err != nil {
-		panic(err)
-	}
+	resp2 := a.rcpPost("/RPC2_Login", map[string]interface{}{
+		"method":  "global.login",
+		"params":  map[string]interface{}{"userName": a.username, "password": hash, "clientType": "Web3.0", "loginType": "Direct"},
+		"id":      a.id,
+		"session": a.session,
+	})
 
 	defer resp2.Body.Close()
 	var result2 map[string]interface{}
@@ -85,7 +93,9 @@ func (a *amcrest) login() {
 		panic(err)
 	}
 	json.Unmarshal(body, &result2)
-	a.session = fmt.Sprintf("%v", result2["session"])
+	if !result2["result"].(bool) {
+		panic("Log in unsuccessful")
+	}
 }
 
 func (a *amcrest) sendKeepAlive() {
@@ -108,19 +118,6 @@ func (a *amcrest) sendKeepAlive() {
 		}
 		fmt.Println(string(body))
 	}
-}
-
-func (a *amcrest) rcpPost(path string, data map[string]interface{}) *http.Response {
-	json_data, err := json.Marshal(data)
-	if err != nil {
-		panic(err)
-	}
-	resp, err := http.Post(fmt.Sprintf("%s%s", a.host, path), "application/x-www-form-urlencoded", bytes.NewBuffer(json_data))
-	a.id++
-	if err != nil {
-		panic(err)
-	}
-	return resp
 }
 
 func (a *amcrest) watchAlarms(handler func(string)) {
@@ -167,13 +164,6 @@ func (a *amcrest) watchAlarms(handler func(string)) {
 			}
 		}
 	}
-}
-
-type event struct {
-	method string
-	action string
-	code   string
-	time   string
 }
 
 func parseEvent(msg []byte) []event {
