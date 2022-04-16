@@ -145,7 +145,6 @@ func (a *amcrest) watchAlarms(handler func(string)) {
 	client := &http.Client{}
 	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/SubscribeNotify.cgi?sessionId=%s", a.host, a.session), nil)
 	req.Header.Add("Cookie", fmt.Sprintf("secure; DhWebClientSessionID=%s; username=%s", a.session, a.username))
-	req.Header.Add("Cookie", fmt.Sprintf("secure; DhWebClientSessionID=%s; username=%s", a.session, a.username))
 	resp, err := client.Do(req)
 	if err != nil {
 		panic(err)
