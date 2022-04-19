@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"regexp"
 	"time"
@@ -53,6 +54,34 @@ func (a *amcrest) rcpPost(path string, data map[string]interface{}) *http.Respon
 		panic(err)
 	}
 	return resp
+}
+
+func (a *amcrest) setDeviceTime(timezone string) {
+	var localtime string
+	if timezone != "" {
+		loc, _ := time.LoadLocation(timezone)
+		localtime = time.Now().In(loc).Format("2006-01-02 15:04:05")
+	} else {
+		localtime = time.Now().Format("2006-01-02 15:04:05")
+	}
+	resp := a.rcpPost("/RPC2", map[string]interface{}{
+		"method":  "global.setCurrentTime",
+		"params":  map[string]interface{}{"time": localtime, "tolerance": 5},
+		"id":      a.id,
+		"session": a.session,
+	})
+
+	defer resp.Body.Close()
+	var result map[string]interface{}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	json.Unmarshal(body, &result)
+	if !result["result"].(bool) {
+		panic("Setting time unsuccessful")
+	}
+	log.Printf("Time set to %s\n", localtime)
 }
 
 func (a *amcrest) login() {
