@@ -60,7 +60,10 @@ func (a *amcrest) rcpPost(path string, data map[string]interface{}) *http.Respon
 func (a *amcrest) setDeviceTime(timezone string) {
 	var localtime string
 	if timezone != "" {
-		loc, _ := time.LoadLocation(timezone)
+		loc, err := time.LoadLocation(timezone)
+		if err != nil {
+			panic(err)
+		}
 		localtime = time.Now().In(loc).Format("2006-01-02 15:04:05")
 	} else {
 		localtime = time.Now().Format("2006-01-02 15:04:05")
