@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"time"
 )
@@ -141,11 +142,11 @@ func (a *amcrest) sendKeepAlive() {
 			"session": a.session,
 		})
 		defer resp.Body.Close()
-		body, err := ioutil.ReadAll(resp.Body)
+		_, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println(string(body))
+		log.Print("Keepalive sent")
 	}
 }
 
@@ -219,12 +220,33 @@ func (t *telegram) telegramHandler(msg string) {
 	http.Get(fmt.Sprintf("https://api.telegram.org/%s/sendMessage?chat_id=%s&text=%s", t.bot_key, t.chat_id, msg))
 }
 
+func getEnv(key string, default_val string) string {
+	val := os.Getenv(key)
+	if val == "" {
+		if default_val == "" {
+			panic(fmt.Errorf("%s is not set", key))
+		}
+		return default_val
+	}
+	return val
+}
+
 func main() {
-	var cam = amcrest{"http://" /*FIXME*/, "admin", "" /*FIXME*/, "", 2}
+	var cam = amcrest{
+		getEnv("AMCREST_BASEURL", ""),
+		getEnv("AMCREST_USER", "admin"),
+		getEnv("AMCREST_PASSWORD", ""),
+		"",
+		2,
+	}
 
 	cam.login()
-	fmt.Println(cam)
+	cam.setDeviceTime(getEnv("AMCREST_TIMEZONE", "UTC"))
+
 	go cam.sendKeepAlive()
-	var tel = telegram{"" /* FIXME */, "" /*FIXME*/}
+	var tel = telegram{
+		getEnv("TELEGRAM_BOT_KEY", ""),
+		getEnv("TELEGRAM_CHAT_ID", ""),
+	}
 	cam.watchAlarms(tel.telegramHandler)
 }
