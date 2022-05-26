@@ -44,17 +44,14 @@ func encryptPassword(username, password, random, realm string) string {
 	return fmt.Sprintf("%X", h1.Sum(nil))
 }
 
-func (a *amcrest) rcpPost(path string, data map[string]interface{}) *http.Response {
+func (a *amcrest) rcpPost(path string, data map[string]interface{}) (*http.Response, error) {
 	json_data, err := json.Marshal(data)
 	if err != nil {
 		panic(err)
 	}
 	resp, err := http.Post(fmt.Sprintf("%s%s", a.host, path), "application/x-www-form-urlencoded", bytes.NewBuffer(json_data))
 	a.id++
-	if err != nil {
-		panic(err)
-	}
-	return resp
+	return resp, err
 }
 
 func (a *amcrest) setDeviceTime(timezone string) {
@@ -68,12 +65,15 @@ func (a *amcrest) setDeviceTime(timezone string) {
 	} else {
 		localtime = time.Now().Format("2006-01-02 15:04:05")
 	}
-	resp := a.rcpPost("/RPC2", map[string]interface{}{
+	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
 		"method":  "global.setCurrentTime",
 		"params":  map[string]interface{}{"time": localtime, "tolerance": 5},
 		"id":      a.id,
 		"session": a.session,
 	})
+	if err != nil {
+		panic(err)
+	}
 
 	defer resp.Body.Close()
 	var result map[string]interface{}
@@ -91,12 +91,16 @@ func (a *amcrest) setDeviceTime(timezone string) {
 func (a *amcrest) login() {
 
 	// First request, to get the random bits
-	resp := a.rcpPost("/RPC2_Login", map[string]interface{}{
+	resp, err := a.rcpPost("/RPC2_Login", map[string]interface{}{
 		"method":  "global.login",
 		"params":  map[string]interface{}{"userName": a.username, "password": "", "clientType": "Web3.0", "loginType": "Direct"},
 		"id":      a.id,
 		"session": a.session,
 	})
+
+	if err != nil {
+		panic(err)
+	}
 
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
@@ -112,12 +116,16 @@ func (a *amcrest) login() {
 	hash := encryptPassword(a.username, a.password, params["random"].(string), params["realm"].(string))
 
 	// second request, actual login
-	resp2 := a.rcpPost("/RPC2_Login", map[string]interface{}{
+	resp2, err := a.rcpPost("/RPC2_Login", map[string]interface{}{
 		"method":  "global.login",
 		"params":  map[string]interface{}{"userName": a.username, "password": hash, "clientType": "Web3.0", "loginType": "Direct"},
 		"id":      a.id,
 		"session": a.session,
 	})
+
+	if err != nil {
+		panic(err)
+	}
 
 	defer resp2.Body.Close()
 	var result2 map[string]interface{}
@@ -132,20 +140,25 @@ func (a *amcrest) login() {
 }
 
 func (a *amcrest) sendKeepAlive() {
-	ticker := time.NewTicker(50 * time.Second)
+	ticker := time.NewTicker(120 * time.Second)
 	for range ticker.C {
 		if a.session == "" {
 			return
 		}
 
-		resp := a.rcpPost("/RPC2", map[string]interface{}{
+		resp, err := a.rcpPost("/RPC2", map[string]interface{}{
 			"method":  "global.keepAlive",
 			"params":  map[string]interface{}{"timeout": 300, "active": true},
 			"id":      a.id,
 			"session": a.session,
 		})
+
+		if err != nil {
+			log.Println(err)
+		}
+
 		defer resp.Body.Close()
-		_, err := ioutil.ReadAll(resp.Body)
+		_, err = ioutil.ReadAll(resp.Body)
 		if err != nil {
 			panic(err)
 		}
@@ -183,6 +196,7 @@ func (a *amcrest) watchAlarms(handler func(string)) {
 	r, _ := regexp.Compile("var json=({.*})\n")
 	reader := bufio.NewReader(resp.Body)
 	buf := make([]byte, 1024)
+	last_event := event{}
 	for {
 		_, err := reader.Read(buf)
 		if err != nil {
@@ -193,7 +207,12 @@ func (a *amcrest) watchAlarms(handler func(string)) {
 			events := parseEvent([]byte(r.FindStringSubmatch(string(buf))[1]))
 			for _, e := range events {
 				fmt.Println(e)
-				handler(fmt.Sprintf("%v", e))
+				if !e.Equals(last_event) {
+					handler(fmt.Sprintf("%v", e))
+					last_event = e
+				} else {
+					log.Printf("Duplicate event")
+				}
 			}
 		}
 	}
@@ -217,6 +236,10 @@ func parseEvent(msg []byte) []event {
 		events[i] = e
 	}
 	return events
+}
+
+func (e event) Equals(e2 event) bool {
+	return e.action == e2.action && e.code == e2.code && e.method == e2.method && e.time == e2.time
 }
 
 func (t *telegram) telegramHandler(msg string) {
