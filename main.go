@@ -20,6 +20,7 @@ type amcrest struct {
 	password string
 	session  string
 	id       int
+	timezone string
 }
 
 type telegram struct {
@@ -44,20 +45,47 @@ func encryptPassword(username, password, random, realm string) string {
 	return fmt.Sprintf("%X", h1.Sum(nil))
 }
 
+func getCnonce() string {
+	b := make([]byte, 16)
+	for i := range b {
+		b[i] = nonceBytes[rand.Int63()%int64(len(nonceBytes))]
+	}
+	return string(b)
+}
+
+func (a *amcrest) authChallenge(uri, realm, nonce string) (string, string) {
+	h := md5.New()
+	ba1 := []byte(fmt.Sprintf("%s:%s:%s", a.username, realm, a.password))
+	h.Write(ba1)
+	ha1 := fmt.Sprintf("%x", h.Sum(nil))
+
+	h.Reset()
+	ba2 := []byte(fmt.Sprintf("GET:%s", uri))
+	h.Write(ba2)
+	ha2 := fmt.Sprintf("%x", h.Sum(nil))
+
+	h.Reset()
+	cnonce := getCnonce()
+	bresp := []byte(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, "00000001", cnonce, "auth", ha2))
+	h.Write(bresp)
+
+	return cnonce, fmt.Sprintf("%x", h.Sum(nil))
+}
+
 func (a *amcrest) rcpPost(path string, data map[string]interface{}) (*http.Response, error) {
 	json_data, err := json.Marshal(data)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	resp, err := http.Post(fmt.Sprintf("%s%s", a.host, path), "application/x-www-form-urlencoded", bytes.NewBuffer(json_data))
 	a.id++
 	return resp, err
 }
 
-func (a *amcrest) setDeviceTime(timezone string) {
+func (a *amcrest) setDeviceTime() {
 	var localtime string
-	if timezone != "" {
-		loc, err := time.LoadLocation(timezone)
+	if a.timezone != "" {
+		loc, err := time.LoadLocation(a.timezone)
 		if err != nil {
 			panic(err)
 		}
@@ -264,11 +292,11 @@ func main() {
 		getEnv("AMCREST_PASSWORD", ""),
 		"",
 		2,
+		getEnv("AMCREST_TIMEZONE", "UTC"),
 	}
 
 	cam.login()
-	cam.setDeviceTime(getEnv("AMCREST_TIMEZONE", "UTC"))
-
+	cam.setDeviceTime()
 	go cam.sendKeepAlive()
 	var tel = telegram{
 		getEnv("TELEGRAM_BOT_KEY", ""),
