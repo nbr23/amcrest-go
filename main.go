@@ -14,13 +14,22 @@ import (
 	"time"
 )
 
+type telegramMessageType int
+
+const (
+	Text telegramMessageType = iota
+	Video
+)
+
 type amcrest struct {
-	host     string
-	username string
-	password string
-	session  string
-	id       int
-	timezone string
+	host       string
+	username   string
+	password   string
+	session    string
+	id         int
+	videocache map[string]bool
+	timezone   string
+	name       string
 }
 
 type telegram struct {
@@ -188,13 +197,14 @@ func (a *amcrest) sendKeepAlive() {
 		defer resp.Body.Close()
 		_, err = ioutil.ReadAll(resp.Body)
 		if err != nil {
-			panic(err)
+			fmt.Println(err)
+		} else {
+			log.Print("Keepalive sent")
 		}
-		log.Print("Keepalive sent")
 	}
 }
 
-func (a *amcrest) watchAlarms(handler func(string)) {
+func (a *amcrest) watchAlarms(handler func(telegramMessageType, string)) {
 
 	// Instanciate event factory FIXME: useless?
 	a.rcpPost("/RPC2", map[string]interface{}{
@@ -236,7 +246,8 @@ func (a *amcrest) watchAlarms(handler func(string)) {
 			for _, e := range events {
 				fmt.Println(e)
 				if !e.Equals(last_event) {
-					handler(fmt.Sprintf("%v", e))
+					handler(Text, fmt.Sprintf("%s: %v", a.name, e))
+					a.getLatestFile(handler)
 					last_event = e
 				} else {
 					log.Printf("Duplicate event")
@@ -270,8 +281,36 @@ func (e event) Equals(e2 event) bool {
 	return e.action == e2.action && e.code == e2.code && e.method == e2.method && e.time == e2.time
 }
 
-func (t *telegram) telegramHandler(msg string) {
-	http.Get(fmt.Sprintf("https://api.telegram.org/%s/sendMessage?chat_id=%s&text=%s", t.bot_key, t.chat_id, msg))
+func createVideoForm(filepath string) (string, io.Reader, error) {
+	body := new(bytes.Buffer)
+	mp := multipart.NewWriter(body)
+	defer mp.Close()
+	file, err := os.Open(filepath)
+	if err != nil {
+		fmt.Println(err)
+		return "", nil, err
+	}
+	defer file.Close()
+	formfile, err := mp.CreateFormFile("video", "video.mp4")
+	if err != nil {
+		fmt.Println(err)
+		return "", nil, err
+	}
+	io.Copy(formfile, file)
+	return mp.FormDataContentType(), body, nil
+}
+
+func (t *telegram) telegramHandler(messageType telegramMessageType, msg string) {
+	if messageType == Text {
+		http.Get(fmt.Sprintf("https://api.telegram.org/%s/sendMessage?chat_id=%s&text=%s", t.bot_key, t.chat_id, msg))
+	} else if messageType == Video {
+		ct, body, err := createVideoForm(msg)
+		if err != nil {
+			fmt.Println(err)
+		}
+		url := fmt.Sprintf("https://api.telegram.org/%s/sendVideo?chat_id=%s", t.bot_key, t.chat_id)
+		http.Post(url, ct, body)
+	}
 }
 
 func getEnv(key string, default_val string) string {
@@ -292,15 +331,20 @@ func main() {
 		getEnv("AMCREST_PASSWORD", ""),
 		"",
 		2,
+		map[string]bool{},
 		getEnv("AMCREST_TIMEZONE", "UTC"),
+		getEnv("AMCREST_NAME", "Camera"),
 	}
 
 	cam.login()
 	cam.setDeviceTime()
+
 	go cam.sendKeepAlive()
+
 	var tel = telegram{
 		getEnv("TELEGRAM_BOT_KEY", ""),
 		getEnv("TELEGRAM_CHAT_ID", ""),
 	}
+
 	cam.watchAlarms(tel.telegramHandler)
 }
