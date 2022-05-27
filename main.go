@@ -28,7 +28,7 @@ type amcrest struct {
 	session    string
 	id         int
 	videocache map[string]bool
-	timezone   string
+	timezone   *time.Location
 	name       string
 }
 
@@ -92,16 +92,8 @@ func (a *amcrest) rcpPost(path string, data map[string]interface{}) (*http.Respo
 }
 
 func (a *amcrest) setDeviceTime() {
-	var localtime string
-	if a.timezone != "" {
-		loc, err := time.LoadLocation(a.timezone)
-		if err != nil {
-			panic(err)
-		}
-		localtime = time.Now().In(loc).Format("2006-01-02 15:04:05")
-	} else {
-		localtime = time.Now().Format("2006-01-02 15:04:05")
-	}
+	localtime := time.Now().In(a.timezone).Format("2006-01-02 15:04:05")
+
 	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
 		"method":  "global.setCurrentTime",
 		"params":  map[string]interface{}{"time": localtime, "tolerance": 5},
@@ -325,6 +317,10 @@ func getEnv(key string, default_val string) string {
 }
 
 func main() {
+	tz, err := time.LoadLocation(getEnv("AMCREST_TIMEZONE", "UTC"))
+	if err != nil {
+		panic(err)
+	}
 	var cam = amcrest{
 		getEnv("AMCREST_BASEURL", ""),
 		getEnv("AMCREST_USER", "admin"),
@@ -332,7 +328,7 @@ func main() {
 		"",
 		2,
 		map[string]bool{},
-		getEnv("AMCREST_TIMEZONE", "UTC"),
+		tz,
 		getEnv("AMCREST_NAME", "Camera"),
 	}
 
