@@ -390,7 +390,7 @@ func (a *amcrest) watchAlarms(handler func(telegramMessageType, string)) {
 			for _, e := range events {
 				log.Println(e)
 				if !e.Equals(last_event) {
-					handler(Text, fmt.Sprintf("%s: %v", a.name, e))
+					handler(Text, fmt.Sprintf("%s: %s %s %v", a.name, e.code, e.action, e.time))
 					last_event = e
 				} else {
 					log.Printf("Duplicate event")
