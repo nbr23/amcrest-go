@@ -6,8 +6,11 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"regexp"
@@ -20,6 +23,8 @@ const (
 	Text telegramMessageType = iota
 	Video
 )
+
+const nonceBytes = "abcdef0123456789"
 
 type amcrest struct {
 	host       string
@@ -166,6 +171,154 @@ func (a *amcrest) login() {
 	if !result2["result"].(bool) {
 		panic("Log in unsuccessful")
 	}
+}
+
+func (a *amcrest) getFileFindObject() int {
+	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
+		"method":  "mediaFileFind.factory.create",
+		"params":  nil,
+		"id":      a.id,
+		"session": a.session,
+	})
+
+	if err != nil {
+		log.Println(err)
+	}
+
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	json.Unmarshal(body, &result)
+
+	return int(result["result"].(float64))
+}
+
+// This also selects the timeframe for the next request
+func (a *amcrest) hasFindFile(mediaFileFindFactory int, startTime string, endTime string) bool {
+	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
+		"method": "mediaFileFind.findFile",
+		"params": map[string]interface{}{
+			"condition": map[string]interface{}{
+				"Channel":   0,
+				"Dirs":      []string{"/mnt/sd"},
+				"Types":     []string{"mp4"},
+				"Order":     "Ascent",
+				"Redundant": "Exclusion",
+				"Events":    nil,
+				"StartTime": startTime,
+				"EndTime":   endTime,
+				"Flags":     []string{"Timing", "Event", "Event", "Manual"},
+			},
+		},
+		"id":      a.id,
+		"session": a.session,
+		"object":  mediaFileFindFactory,
+	})
+
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	json.Unmarshal(body, &result)
+	return result["result"].(bool)
+}
+
+func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
+	startDate := time.Now().AddDate(0, 0, -1).In(a.timezone).Format("2006-01-02 15:04:05")
+	endDate := time.Now().AddDate(0, 0, 1).In(a.timezone).Format("2006-01-02 15:04:05")
+
+	fmt.Println(startDate, endDate)
+
+	mediaFileFindFactory := a.getFileFindObject()
+	if !a.hasFindFile(mediaFileFindFactory, startDate, endDate) {
+		fmt.Println("No files")
+	}
+
+	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
+		"method": "mediaFileFind.findNextFile",
+		"params": map[string]interface{}{
+			"count": 100,
+		},
+		"id":      a.id,
+		"session": a.session,
+		"object":  mediaFileFindFactory,
+	})
+
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	json.Unmarshal(body, &result)
+
+	if result["result"].(bool) {
+		for _, recording := range result["params"].(map[string]interface{})["infos"].([]interface{}) {
+			path := recording.(map[string]interface{})["FilePath"].(string)
+			if _, ok := a.videocache[path]; !ok {
+				a.videocache[path] = true
+				file := a.downloadVideo(path)
+				handler(Video, file)
+				fmt.Printf("Sent %s\n", file)
+				os.Remove(file)
+			}
+		}
+	}
+}
+
+func parseWwwAuthenticate(header string) (string, string, string) {
+	r, _ := regexp.Compile("Digest realm=\"([^\"]+)\", qop=\"auth\", nonce=\"([^\"]+)\", opaque=\"([^\"]+)\"")
+	matches := r.FindStringSubmatch(string(header))
+	return matches[1], matches[2], matches[3]
+}
+
+func (a *amcrest) downloadVideo(videopath string) string {
+	file, err := ioutil.TempFile("/tmp", "*.mp4")
+	if err != nil {
+		log.Println(err)
+	}
+
+	defer file.Close()
+
+	client := &http.Client{}
+	uri := fmt.Sprintf("/cgi-bin/RPC_Loadfile%s", videopath)
+
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s%s", a.host, uri), nil)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+	}
+
+	realm, nonce, opaque := parseWwwAuthenticate(resp.Header["Www-Authenticate"][0])
+	cnonce, challresp := a.authChallenge(uri, realm, nonce)
+
+	req, err = http.NewRequest("GET", fmt.Sprintf("%s%s", a.host, uri), nil)
+	authstr := fmt.Sprintf(
+		"Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", response=\"%s\", opaque=\"%s\", qop=auth, nc=%s, cnonce=\"%s\"",
+		a.username, realm, nonce, uri, challresp, opaque, "00000001", cnonce)
+	req.Header.Add("Authorization", authstr)
+
+	resp, err = client.Do(req)
+	if err != nil {
+		log.Println(err)
+	}
+	defer resp.Body.Close()
+
+	_, err = io.Copy(file, resp.Body)
+	if err != nil {
+		log.Println(err)
+	}
+	fmt.Println(file.Name())
+	return file.Name()
 }
 
 func (a *amcrest) sendKeepAlive() {
@@ -342,5 +495,6 @@ func main() {
 		getEnv("TELEGRAM_CHAT_ID", ""),
 	}
 
+	cam.getLatestFile(tel.telegramHandler)
 	cam.watchAlarms(tel.telegramHandler)
 }
