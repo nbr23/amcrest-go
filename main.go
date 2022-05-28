@@ -236,7 +236,7 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 
 	mediaFileFindFactory := a.getFileFindObject()
 	if !a.hasFindFile(mediaFileFindFactory, startDate, endDate) {
-		fmt.Println("No files")
+		log.Println("No files found")
 		return
 	}
 
@@ -266,7 +266,7 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 				a.videocache[path] = true
 				file := a.downloadVideo(path)
 				handler(Video, file)
-				fmt.Printf("Sent %s\n", file)
+				log.Printf("Sent %s\n", file)
 				os.Remove(file)
 			}
 		}
@@ -316,7 +316,7 @@ func (a *amcrest) downloadVideo(videopath string) string {
 	if err != nil {
 		log.Println(err)
 	}
-	fmt.Println(file.Name())
+	log.Println(file.Name())
 	return file.Name()
 }
 
@@ -341,7 +341,7 @@ func (a *amcrest) sendKeepAlive() {
 		defer resp.Body.Close()
 		_, err = ioutil.ReadAll(resp.Body)
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 		} else {
 			log.Print("Keepalive sent")
 		}
@@ -388,16 +388,26 @@ func (a *amcrest) watchAlarms(handler func(telegramMessageType, string)) {
 		if len(matches) == 2 {
 			events := parseEvent([]byte(r.FindStringSubmatch(string(buf))[1]))
 			for _, e := range events {
-				fmt.Println(e)
+				log.Println(e)
 				if !e.Equals(last_event) {
 					handler(Text, fmt.Sprintf("%s: %v", a.name, e))
-					a.getLatestFile(handler)
 					last_event = e
 				} else {
 					log.Printf("Duplicate event")
 				}
 			}
 		}
+	}
+}
+
+func (a *amcrest) pollRecordingFiles(handler func(telegramMessageType, string)) {
+	ticker := time.NewTicker(60 * time.Second)
+	for range ticker.C {
+		log.Println("Polling recording files")
+		if a.session == "" {
+			return
+		}
+		a.getLatestFile(handler)
 	}
 }
 
@@ -431,13 +441,13 @@ func createVideoForm(filepath string) (string, io.Reader, error) {
 	defer mp.Close()
 	file, err := os.Open(filepath)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return "", nil, err
 	}
 	defer file.Close()
 	formfile, err := mp.CreateFormFile("video", "video.mp4")
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return "", nil, err
 	}
 	io.Copy(formfile, file)
@@ -450,7 +460,7 @@ func (t *telegram) telegramHandler(messageType telegramMessageType, msg string) 
 	} else if messageType == Video {
 		ct, body, err := createVideoForm(msg)
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 		}
 		url := fmt.Sprintf("https://api.telegram.org/%s/sendVideo?chat_id=%s", t.bot_key, t.chat_id)
 		http.Post(url, ct, body)
@@ -494,6 +504,6 @@ func main() {
 		getEnv("TELEGRAM_CHAT_ID", ""),
 	}
 
-	cam.getLatestFile(tel.telegramHandler)
+	go cam.pollRecordingFiles(tel.telegramHandler)
 	cam.watchAlarms(tel.telegramHandler)
 }
