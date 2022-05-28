@@ -231,14 +231,13 @@ func (a *amcrest) hasFindFile(mediaFileFindFactory int, startTime string, endTim
 }
 
 func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
-	startDate := time.Now().AddDate(0, 0, -1).In(a.timezone).Format("2006-01-02 15:04:05")
-	endDate := time.Now().AddDate(0, 0, 1).In(a.timezone).Format("2006-01-02 15:04:05")
-
-	fmt.Println(startDate, endDate)
+	startDate := time.Now().Add(-2 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
+	endDate := time.Now().Add(2 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
 
 	mediaFileFindFactory := a.getFileFindObject()
 	if !a.hasFindFile(mediaFileFindFactory, startDate, endDate) {
 		fmt.Println("No files")
+		return
 	}
 
 	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
@@ -260,7 +259,7 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 	}
 	json.Unmarshal(body, &result)
 
-	if result["result"].(bool) {
+	if result["result"].(bool) && result["params"].(map[string]interface{})["found"].(float64) > 0 {
 		for _, recording := range result["params"].(map[string]interface{})["infos"].([]interface{}) {
 			path := recording.(map[string]interface{})["FilePath"].(string)
 			if _, ok := a.videocache[path]; !ok {
