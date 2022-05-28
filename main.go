@@ -341,7 +341,7 @@ func (a *amcrest) sendKeepAlive() {
 		if err != nil {
 			log.Println(err)
 		}
-		cam.setDeviceTime()
+		a.setDeviceTime()
 
 		defer resp.Body.Close()
 		body, err := ioutil.ReadAll(resp.Body)
