@@ -124,6 +124,7 @@ func (a *amcrest) setDeviceTime() {
 
 func (a *amcrest) login() {
 
+	log.Println("Logging in")
 	// First request, to get the random bits
 	resp, err := a.rcpPost("/RPC2_Login", map[string]interface{}{
 		"method":  "global.login",
@@ -171,6 +172,7 @@ func (a *amcrest) login() {
 	if !result2["result"].(bool) {
 		panic("Log in unsuccessful")
 	}
+	fmt.Println("Log in successful!")
 }
 
 func (a *amcrest) getFileFindObject() int {
@@ -193,6 +195,8 @@ func (a *amcrest) getFileFindObject() int {
 		panic(err)
 	}
 	json.Unmarshal(body, &result)
+
+	log.Println(result)
 
 	return int(result["result"].(float64))
 }
@@ -231,8 +235,8 @@ func (a *amcrest) hasFindFile(mediaFileFindFactory int, startTime string, endTim
 }
 
 func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
-	startDate := time.Now().Add(-2 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
-	endDate := time.Now().Add(2 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
+	startDate := time.Now().Add(-12 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
+	endDate := time.Now().Add(12 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
 
 	mediaFileFindFactory := a.getFileFindObject()
 	if !a.hasFindFile(mediaFileFindFactory, startDate, endDate) {
@@ -321,7 +325,7 @@ func (a *amcrest) downloadVideo(videopath string) string {
 }
 
 func (a *amcrest) sendKeepAlive() {
-	ticker := time.NewTicker(120 * time.Second)
+	ticker := time.NewTicker(55 * time.Second)
 	for range ticker.C {
 		if a.session == "" {
 			return
@@ -337,13 +341,19 @@ func (a *amcrest) sendKeepAlive() {
 		if err != nil {
 			log.Println(err)
 		}
+		cam.setDeviceTime()
 
 		defer resp.Body.Close()
-		_, err = ioutil.ReadAll(resp.Body)
+		body, err := ioutil.ReadAll(resp.Body)
+		var result map[string]interface{}
 		if err != nil {
 			log.Println(err)
 		} else {
-			log.Print("Keepalive sent")
+			json.Unmarshal(body, &result)
+			log.Printf("Keepalive sent %v\n", result)
+			if !result["result"].(bool) {
+				a.login()
+			}
 		}
 	}
 }
@@ -382,7 +392,9 @@ func (a *amcrest) watchAlarms(handler func(telegramMessageType, string)) {
 	for {
 		_, err := reader.Read(buf)
 		if err != nil {
-			panic(err)
+			log.Printf("Error reading event stream: %s", err)
+			time.Sleep(time.Second * 5)
+			continue
 		}
 		matches := r.FindStringSubmatch(string(buf))
 		if len(matches) == 2 {
