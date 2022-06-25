@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/md5"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,8 @@ import (
 	"os"
 	"regexp"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type telegramMessageType int
@@ -35,6 +38,7 @@ type amcrest struct {
 	videocache map[string]bool
 	timezone   *time.Location
 	name       string
+	dbpath     string
 }
 
 type telegram struct {
@@ -234,6 +238,54 @@ func (a *amcrest) hasFindFile(mediaFileFindFactory int, startTime string, endTim
 	return result["result"].(bool)
 }
 
+func filenameExists(db *sql.DB, filename string) bool {
+	stmt, err := db.Prepare("SELECT * FROM processed_files WHERE filename = ?")
+	if err != nil {
+		fmt.Println(err)
+		return false
+	}
+	defer stmt.Close()
+	rows, err := stmt.Query(filename)
+	if err != nil {
+		fmt.Println(err)
+		return false
+	}
+	defer rows.Close()
+	return rows.Next()
+}
+
+func (a *amcrest) logProcessedFile(filename string) bool {
+	db, err := sql.Open("sqlite3", a.dbpath)
+
+	if err != nil {
+		fmt.Println(err)
+		return false
+	}
+	defer db.Close()
+
+	_, err = db.Exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS processed_files (filename TEXT);"))
+	if err != nil {
+		fmt.Println(err)
+		return false
+	}
+
+	if !filenameExists(db, filename) {
+		stmt, err := db.Prepare("INSERT INTO processed_files(filename) VALUES(?)")
+		defer stmt.Close()
+		if err != nil {
+			fmt.Println(err)
+			return false
+		}
+		_, err = stmt.Exec(filename)
+		if err != nil {
+			fmt.Println(err)
+			return false
+		}
+		return false
+	}
+	return true
+}
+
 func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 	startDate := time.Now().Add(-12 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
 	endDate := time.Now().Add(12 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
@@ -266,7 +318,7 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 	if result["result"].(bool) && result["params"].(map[string]interface{})["found"].(float64) > 0 {
 		for _, recording := range result["params"].(map[string]interface{})["infos"].([]interface{}) {
 			path := recording.(map[string]interface{})["FilePath"].(string)
-			if _, ok := a.videocache[path]; !ok {
+			if _, ok := a.videocache[path]; !ok && !a.logProcessedFile(path) {
 				a.videocache[path] = true
 				file := a.downloadVideo(path)
 				handler(Video, file)
@@ -504,6 +556,7 @@ func main() {
 		map[string]bool{},
 		tz,
 		getEnv("AMCREST_NAME", "Camera"),
+		getEnv("AMCREST_DB_PATH", ""),
 	}
 
 	cam.login()

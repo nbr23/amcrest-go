@@ -1,7 +1,9 @@
 FROM golang:alpine as builder
 
-COPY main.go .
-RUN mkdir /build && go build -o /build/amcrest-go main.go
+WORKDIR /build
+
+COPY go.mod go.sum main.go .
+RUN apk add gcc musl-dev && go build -o amcrest-go main.go
 
 FROM alpine:latest
 
