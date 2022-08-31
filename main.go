@@ -520,14 +520,22 @@ func createVideoForm(filepath string) (string, io.Reader, error) {
 
 func (t *telegram) telegramHandler(messageType telegramMessageType, msg string) {
 	if messageType == Text {
-		http.Get(fmt.Sprintf("https://api.telegram.org/%s/sendMessage?chat_id=%s&text=%s", t.bot_key, t.chat_id, msg))
+		resp, err := http.Get(fmt.Sprintf("https://api.telegram.org/%s/sendMessage?chat_id=%s&text=%s", t.bot_key, t.chat_id, msg))
+		log.Println("Telegram response: %v", resp)
+		if err != nil {
+			log.Println("Telegram error: %v", err)
+		}
 	} else if messageType == Video {
 		ct, body, err := createVideoForm(msg)
 		if err != nil {
 			log.Println(err)
 		}
 		url := fmt.Sprintf("https://api.telegram.org/%s/sendVideo?chat_id=%s", t.bot_key, t.chat_id)
-		http.Post(url, ct, body)
+		resp, err := http.Post(url, ct, body)
+		log.Println("Telegram response: %v", resp)
+		if err != nil {
+			log.Println("Telegram error: %v", err)
+		}
 	}
 }
 
