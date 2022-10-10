@@ -7,9 +7,8 @@ ARG TARGET_ARCH
 WORKDIR /build
 
 COPY go.mod go.sum main.go ./
-RUN apk add gcc musl-dev file
-RUN GOOS=${TARGET_PLATFORM} GOARCH=${TARGET_ARCH} go build -o amcrest-go-${TARGET_ARCH} main.go
-RUN ls -ltrah && file amcrest-go-${TARGET_ARCH}
+RUN apk add gcc musl-dev
+RUN GOOS=${TARGET_PLATFORM} GOARCH=${TARGET_ARCH} go build -trimpath -o amcrest-go-${TARGET_ARCH} main.go
 
 FROM --platform=${TARGET_PLATFORM}/${TARGET_ARCH} alpine:latest
 ARG TARGET_PLATFORM
