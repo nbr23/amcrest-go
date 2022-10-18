@@ -19,8 +19,8 @@ pipeline {
             steps {
                 sh '''
                     BUILDER=`docker buildx create --use`
-                    docker buildx build --build-arg TARGET_ARCH=amd64 -t nbr23/amcrest-go:latest-amd64 . --push
-                    docker buildx build --build-arg TARGET_ARCH=arm64 -t nbr23/amcrest-go:latest-arm64 . --push
+                    docker buildx build --platform linux/amd64 --build-arg TARGET_ARCH=amd64 -t nbr23/amcrest-go:latest-amd64 . --push
+                    docker buildx build --platform linux/arm64 --build-arg TARGET_ARCH=arm64 -t nbr23/amcrest-go:latest-arm64 . --push
                     docker buildx rm $BUILDER
                     '''
             }
