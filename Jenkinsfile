@@ -1,40 +1,28 @@
+@Library('jenkins-shared-library') _
+
 pipeline {
     agent any
     stages {
-
-
         stage('Checkout'){
             steps {
                 checkout scm
             }
         }
-        stage('Dockerhub login') {
+        stage('Prep buildx') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKERHUB_CREDENTIALS_USR', passwordVariable: 'DOCKERHUB_CREDENTIALS_PSW')]) {
-                    sh 'docker login -u $DOCKERHUB_CREDENTIALS_USR -p "$DOCKERHUB_CREDENTIALS_PSW"'
+                script {
+                    env.BUILDX_BUILDER = getBuildxBuilder();
+                    sh 'docker manifest rm nbr23/amcrest-go:latest || true'
                 }
             }
         }
-        stage('Build Arch Images') {
-            steps {
-                sh '''
-                    BUILDER=`docker buildx create --use`
-                    docker buildx build --platform linux/amd64 --build-arg TARGET_ARCH=amd64 -t nbr23/amcrest-go:latest-amd64 . --push
-                    docker buildx build --platform linux/arm64 --build-arg TARGET_ARCH=arm64 -t nbr23/amcrest-go:latest-arm64 . --push
-                    docker buildx rm $BUILDER
-                    '''
-            }
-        }
-        stage('Push manifest') {
+        stage('Build and push multiarch image') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKERHUB_CREDENTIALS_USR', passwordVariable: 'DOCKERHUB_CREDENTIALS_PSW')]) {
                     sh 'docker login -u $DOCKERHUB_CREDENTIALS_USR -p "$DOCKERHUB_CREDENTIALS_PSW"'
                 }
                 sh '''
-                    docker manifest rm nbr23/amcrest-go:latest || true
-                    docker manifest create nbr23/amcrest-go:latest -a nbr23/amcrest-go:latest-amd64 -a nbr23/amcrest-go:latest-arm64
-                    docker manifest inspect nbr23/amcrest-go:latest
-                    docker manifest push nbr23/amcrest-go:latest
+                    docker buildx build --platform linux/arm64,linux/amd64 -t nbr23/amcrest-go:latest . --push
                     '''
             }
         }
@@ -43,6 +31,8 @@ pipeline {
     post {
         always {
             sh 'docker logout'
+            sh 'docker buildx stop $BUILDX_BUILDER || true'
+            sh 'docker buildx rm $BUILDX_BUILDER'
         }
     }
 }
