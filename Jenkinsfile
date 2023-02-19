@@ -21,9 +21,9 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKERHUB_CREDENTIALS_USR', passwordVariable: 'DOCKERHUB_CREDENTIALS_PSW')]) {
                     sh 'docker login -u $DOCKERHUB_CREDENTIALS_USR -p "$DOCKERHUB_CREDENTIALS_PSW"'
                 }
-                sh '''
-                    docker buildx build --platform linux/arm64,linux/amd64 -t nbr23/amcrest-go:latest . --push
-                    '''
+                sh """
+                    docker buildx build --builder \$BUILDX_BUILDER --platform linux/arm64,linux/amd64 -t nbr23/amcrest-go:latest . ${GIT_BRANCH == "master" ? "--push":""}
+                    """
             }
         }
     }
