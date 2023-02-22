@@ -36,7 +36,6 @@ pipeline {
 
     post {
         always {
-            sh 'docker logout'
             sh 'docker buildx stop $BUILDX_BUILDER || true'
             sh 'docker buildx rm $BUILDX_BUILDER'
         }
