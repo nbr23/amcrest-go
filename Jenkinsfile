@@ -26,6 +26,12 @@ pipeline {
                     """
             }
         }
+        stage('Sync github repos') {
+            when { branch 'master' }
+            steps {
+                syncRemoteBranch('git@github.com:nbr23/amcrest-go.git', 'master')
+            }
+        }
     }
 
     post {
