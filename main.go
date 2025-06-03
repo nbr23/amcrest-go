@@ -115,7 +115,7 @@ func (a *amcrest) setDeviceTime() {
 
 	defer resp.Body.Close()
 	var result map[string]interface{}
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
 	}
@@ -521,9 +521,9 @@ func createVideoForm(filepath string) (string, io.Reader, error) {
 func (t *telegram) telegramHandler(messageType telegramMessageType, msg string) {
 	if messageType == Text {
 		resp, err := http.Get(fmt.Sprintf("https://api.telegram.org/%s/sendMessage?chat_id=%s&text=%s", t.bot_key, t.chat_id, msg))
-		log.Println("Telegram response: %v", resp)
+		log.Printf("Telegram response: %v\n", resp)
 		if err != nil {
-			log.Println("Telegram error: %v", err)
+			log.Printf("Telegram error: %v\n", err)
 		}
 	} else if messageType == Video {
 		ct, body, err := createVideoForm(msg)
@@ -532,9 +532,9 @@ func (t *telegram) telegramHandler(messageType telegramMessageType, msg string) 
 		}
 		url := fmt.Sprintf("https://api.telegram.org/%s/sendVideo?chat_id=%s", t.bot_key, t.chat_id)
 		resp, err := http.Post(url, ct, body)
-		log.Println("Telegram response: %v", resp)
+		log.Printf("Telegram response: %v\n", resp)
 		if err != nil {
-			log.Println("Telegram error: %v", err)
+			log.Printf("Telegram error: %v\n", err)
 		}
 	}
 }
