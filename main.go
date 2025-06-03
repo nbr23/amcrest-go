@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"mime/multipart"
@@ -142,7 +141,7 @@ func (a *amcrest) login() {
 	}
 
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
 	}
@@ -168,7 +167,7 @@ func (a *amcrest) login() {
 
 	defer resp2.Body.Close()
 	var result2 map[string]interface{}
-	body, err = ioutil.ReadAll(resp2.Body)
+	body, err = io.ReadAll(resp2.Body)
 	if err != nil {
 		panic(err)
 	}
@@ -193,8 +192,8 @@ func (a *amcrest) getFileFindObject() (int, error) {
 
 	defer resp.Body.Close()
 
-	var result map[string]interface{}
-	body, err := ioutil.ReadAll(resp.Body)
+	var result map[string]any
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
 	}
@@ -227,10 +226,15 @@ func (a *amcrest) hasFindFile(mediaFileFindFactory int, startTime string, endTim
 		"object":  mediaFileFindFactory,
 	})
 
+	if err != nil {
+		log.Println("Error finding file:", err)
+		return false
+	}
+
 	defer resp.Body.Close()
 
-	var result map[string]interface{}
-	body, err := ioutil.ReadAll(resp.Body)
+	var result map[string]any
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
 	}
@@ -303,7 +307,7 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 
 	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
 		"method": "mediaFileFind.findNextFile",
-		"params": map[string]interface{}{
+		"params": map[string]any{
 			"count": 100,
 		},
 		"id":      a.id,
@@ -318,8 +322,8 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 
 	defer resp.Body.Close()
 
-	var result map[string]interface{}
-	body, err := ioutil.ReadAll(resp.Body)
+	var result map[string]any
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
 	}
@@ -346,7 +350,7 @@ func parseWwwAuthenticate(header string) (string, string, string) {
 }
 
 func (a *amcrest) downloadVideo(videopath string) string {
-	file, err := ioutil.TempFile("/tmp", "*.mp4")
+	file, err := os.CreateTemp("/tmp", "*.mp4")
 	if err != nil {
 		log.Println(err)
 	}
@@ -406,8 +410,8 @@ func (a *amcrest) sendKeepAlive() {
 		a.setDeviceTime()
 
 		defer resp.Body.Close()
-		body, err := ioutil.ReadAll(resp.Body)
-		var result map[string]interface{}
+		body, err := io.ReadAll(resp.Body)
+		var result map[string]any
 		if err != nil {
 			log.Println(err)
 		} else {
