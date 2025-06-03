@@ -89,7 +89,7 @@ func (a *amcrest) authChallenge(uri, realm, nonce string) (string, string) {
 	return cnonce, fmt.Sprintf("%x", h.Sum(nil))
 }
 
-func (a *amcrest) rcpPost(path string, data map[string]interface{}) (*http.Response, error) {
+func (a *amcrest) rcpPost(path string, data map[string]any) (*http.Response, error) {
 	json_data, err := json.Marshal(data)
 	if err != nil {
 		return nil, err
@@ -102,9 +102,9 @@ func (a *amcrest) rcpPost(path string, data map[string]interface{}) (*http.Respo
 func (a *amcrest) setDeviceTime() {
 	localtime := time.Now().In(a.timezone).Format("2006-01-02 15:04:05")
 
-	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
+	resp, err := a.rcpPost("/RPC2", map[string]any{
 		"method":  "global.setCurrentTime",
-		"params":  map[string]interface{}{"time": localtime, "tolerance": 5},
+		"params":  map[string]any{"time": localtime, "tolerance": 5},
 		"id":      a.id,
 		"session": a.session,
 	})
@@ -113,7 +113,7 @@ func (a *amcrest) setDeviceTime() {
 	}
 
 	defer resp.Body.Close()
-	var result map[string]interface{}
+	var result map[string]any
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
@@ -129,9 +129,9 @@ func (a *amcrest) login() {
 
 	log.Println("Logging in")
 	// First request, to get the random bits
-	resp, err := a.rcpPost("/RPC2_Login", map[string]interface{}{
+	resp, err := a.rcpPost("/RPC2_Login", map[string]any{
 		"method":  "global.login",
-		"params":  map[string]interface{}{"userName": a.username, "password": "", "clientType": "Web3.0", "loginType": "Direct"},
+		"params":  map[string]any{"userName": a.username, "password": "", "clientType": "Web3.0", "loginType": "Direct"},
 		"id":      a.id,
 		"session": a.session,
 	})
@@ -146,17 +146,17 @@ func (a *amcrest) login() {
 		panic(err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	json.Unmarshal(body, &result)
-	params := result["params"].(map[string]interface{})
+	params := result["params"].(map[string]any)
 	a.session = result["session"].(string)
 
 	hash := encryptPassword(a.username, a.password, params["random"].(string), params["realm"].(string))
 
 	// second request, actual login
-	resp2, err := a.rcpPost("/RPC2_Login", map[string]interface{}{
+	resp2, err := a.rcpPost("/RPC2_Login", map[string]any{
 		"method":  "global.login",
-		"params":  map[string]interface{}{"userName": a.username, "password": hash, "clientType": "Web3.0", "loginType": "Direct"},
+		"params":  map[string]any{"userName": a.username, "password": hash, "clientType": "Web3.0", "loginType": "Direct"},
 		"id":      a.id,
 		"session": a.session,
 	})
@@ -166,7 +166,7 @@ func (a *amcrest) login() {
 	}
 
 	defer resp2.Body.Close()
-	var result2 map[string]interface{}
+	var result2 map[string]any
 	body, err = io.ReadAll(resp2.Body)
 	if err != nil {
 		panic(err)
@@ -179,7 +179,7 @@ func (a *amcrest) login() {
 }
 
 func (a *amcrest) getFileFindObject() (int, error) {
-	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
+	resp, err := a.rcpPost("/RPC2", map[string]any{
 		"method":  "mediaFileFind.factory.create",
 		"params":  nil,
 		"id":      a.id,
@@ -206,10 +206,10 @@ func (a *amcrest) getFileFindObject() (int, error) {
 
 // This also selects the timeframe for the next request
 func (a *amcrest) hasFindFile(mediaFileFindFactory int, startTime string, endTime string) bool {
-	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
+	resp, err := a.rcpPost("/RPC2", map[string]any{
 		"method": "mediaFileFind.findFile",
-		"params": map[string]interface{}{
-			"condition": map[string]interface{}{
+		"params": map[string]any{
+			"condition": map[string]any{
 				"Channel":   0,
 				"Dirs":      []string{"/mnt/sd"},
 				"Types":     []string{"mp4"},
@@ -305,7 +305,7 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 		return
 	}
 
-	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
+	resp, err := a.rcpPost("/RPC2", map[string]any{
 		"method": "mediaFileFind.findNextFile",
 		"params": map[string]any{
 			"count": 100,
@@ -329,9 +329,9 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 	}
 	json.Unmarshal(body, &result)
 
-	if result["result"].(bool) && result["params"].(map[string]interface{})["found"].(float64) > 0 {
-		for _, recording := range result["params"].(map[string]interface{})["infos"].([]interface{}) {
-			path := recording.(map[string]interface{})["FilePath"].(string)
+	if result["result"].(bool) && result["params"].(map[string]any)["found"].(float64) > 0 {
+		for _, recording := range result["params"].(map[string]any)["infos"].([]any) {
+			path := recording.(map[string]any)["FilePath"].(string)
 			if _, ok := a.videocache[path]; !ok && !a.logProcessedFile(path) {
 				a.videocache[path] = true
 				file := a.downloadVideo(path)
@@ -397,9 +397,9 @@ func (a *amcrest) sendKeepAlive() {
 			return
 		}
 
-		resp, err := a.rcpPost("/RPC2", map[string]interface{}{
+		resp, err := a.rcpPost("/RPC2", map[string]any{
 			"method":  "global.keepAlive",
-			"params":  map[string]interface{}{"timeout": 300, "active": true},
+			"params":  map[string]any{"timeout": 300, "active": true},
 			"id":      a.id,
 			"session": a.session,
 		})
@@ -427,7 +427,7 @@ func (a *amcrest) sendKeepAlive() {
 func (a *amcrest) watchAlarms(handler func(telegramMessageType, string)) {
 
 	// Instanciate event factory FIXME: useless?
-	a.rcpPost("/RPC2", map[string]interface{}{
+	a.rcpPost("/RPC2", map[string]any{
 		"method":  "eventManager.factory.instance",
 		"params":  nil,
 		"id":      a.id,
@@ -435,9 +435,9 @@ func (a *amcrest) watchAlarms(handler func(telegramMessageType, string)) {
 	})
 
 	// subscribe to videomotion
-	a.rcpPost("/RPC2", map[string]interface{}{
+	a.rcpPost("/RPC2", map[string]any{
 		"method":  "eventManager.attach",
-		"params":  map[string]interface{}{"codes": []string{"VideoMotion"}},
+		"params":  map[string]any{"codes": []string{"VideoMotion"}},
 		"id":      a.id,
 		"session": a.session,
 	})
@@ -490,19 +490,19 @@ func (a *amcrest) pollRecordingFiles(handler func(telegramMessageType, string)) 
 }
 
 func parseEvent(msg []byte) []event {
-	var result map[string]interface{}
+	var result map[string]any
 	json.Unmarshal(msg, &result)
 
-	params := result["params"].(map[string]interface{})
-	eventlist := params["eventList"].([]interface{})
+	params := result["params"].(map[string]any)
+	eventlist := params["eventList"].([]any)
 
 	events := make([]event, len(eventlist))
 	for i, evt := range eventlist {
 		e := event{}
 		e.method = result["method"].(string)
-		e.action = evt.(map[string]interface{})["Action"].(string)
-		e.code = evt.(map[string]interface{})["Code"].(string)
-		data := evt.(map[string]interface{})["Data"].(map[string]interface{})
+		e.action = evt.(map[string]any)["Action"].(string)
+		e.code = evt.(map[string]any)["Code"].(string)
+		data := evt.(map[string]any)["Data"].(map[string]any)
 		e.time = data["LocaleTime"].(string)
 		events[i] = e
 	}
