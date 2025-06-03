@@ -179,7 +179,7 @@ func (a *amcrest) login() {
 	fmt.Println("Log in successful!")
 }
 
-func (a *amcrest) getFileFindObject() int {
+func (a *amcrest) getFileFindObject() (int, error) {
 	resp, err := a.rcpPost("/RPC2", map[string]interface{}{
 		"method":  "mediaFileFind.factory.create",
 		"params":  nil,
@@ -188,7 +188,7 @@ func (a *amcrest) getFileFindObject() int {
 	})
 
 	if err != nil {
-		log.Println(err)
+		return 0, err
 	}
 
 	defer resp.Body.Close()
@@ -202,7 +202,7 @@ func (a *amcrest) getFileFindObject() int {
 
 	log.Println(result)
 
-	return int(result["result"].(float64))
+	return int(result["result"].(float64)), nil
 }
 
 // This also selects the timeframe for the next request
@@ -290,7 +290,12 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 	startDate := time.Now().Add(-12 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
 	endDate := time.Now().Add(12 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
 
-	mediaFileFindFactory := a.getFileFindObject()
+	mediaFileFindFactory, err := a.getFileFindObject()
+	if err != nil {
+		log.Println("Error getting mediaFileFindFactory:", err)
+		return
+	}
+
 	if !a.hasFindFile(mediaFileFindFactory, startDate, endDate) {
 		log.Println("No files found")
 		return
@@ -305,6 +310,11 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 		"session": a.session,
 		"object":  mediaFileFindFactory,
 	})
+
+	if err != nil {
+		log.Println("Error finding next file:", err)
+		return
+	}
 
 	defer resp.Body.Close()
 
