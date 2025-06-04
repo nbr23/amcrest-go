@@ -271,7 +271,7 @@ func (a *amcrest) logProcessedFile(filename string) bool {
 	}
 	defer db.Close()
 
-	_, err = db.Exec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS processed_files (filename TEXT);"))
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS processed_files (filename TEXT);")
 	if err != nil {
 		fmt.Println(err)
 		return false
@@ -279,11 +279,11 @@ func (a *amcrest) logProcessedFile(filename string) bool {
 
 	if !filenameExists(db, filename) {
 		stmt, err := db.Prepare("INSERT INTO processed_files(filename) VALUES(?)")
-		defer stmt.Close()
 		if err != nil {
 			fmt.Println(err)
 			return false
 		}
+		defer stmt.Close()
 		_, err = stmt.Exec(filename)
 		if err != nil {
 			fmt.Println(err)
