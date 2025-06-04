@@ -151,6 +151,10 @@ func (a *amcrest) login() {
 	params := result["params"].(map[string]any)
 	a.session = result["session"].(string)
 
+	if a.session == "" {
+		panic("Session is empty, login failed")
+	}
+
 	hash := encryptPassword(a.username, a.password, params["random"].(string), params["realm"].(string))
 
 	// second request, actual login
@@ -405,7 +409,7 @@ func (a *amcrest) sendKeepAlive() {
 		})
 
 		if err != nil {
-			log.Println(err)
+			log.Printf("Error sending keepalive: %v\n", err)
 		}
 		a.setDeviceTime()
 
@@ -413,7 +417,7 @@ func (a *amcrest) sendKeepAlive() {
 		body, err := io.ReadAll(resp.Body)
 		var result map[string]any
 		if err != nil {
-			log.Println(err)
+			log.Printf("Error reading keepalive response: %v\n", err)
 		} else {
 			json.Unmarshal(body, &result)
 			log.Printf("Keepalive sent %v\n", result)
@@ -535,7 +539,7 @@ func createVideoForm(filepath string) (string, io.Reader, error) {
 func (t *telegram) telegramHandler(messageType telegramMessageType, msg string) {
 	if messageType == Text {
 		resp, err := http.Get(fmt.Sprintf("https://api.telegram.org/%s/sendMessage?chat_id=%s&text=%s", t.bot_key, t.chat_id, msg))
-		log.Printf("Telegram response: %v\n", resp)
+		log.Printf("GET api.telegram.org message %d\n", resp.StatusCode)
 		if err != nil {
 			log.Printf("Telegram error: %v\n", err)
 		}
@@ -546,7 +550,7 @@ func (t *telegram) telegramHandler(messageType telegramMessageType, msg string) 
 		}
 		url := fmt.Sprintf("https://api.telegram.org/%s/sendVideo?chat_id=%s", t.bot_key, t.chat_id)
 		resp, err := http.Post(url, ct, body)
-		log.Printf("Telegram response: %v\n", resp)
+		log.Printf("POST api.telegram.org video: %d\n", resp.StatusCode)
 		if err != nil {
 			log.Printf("Telegram error: %v\n", err)
 		}
