@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/md5"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,8 +14,6 @@ import (
 	"os"
 	"regexp"
 	"time"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 type telegramMessageType int
@@ -29,15 +26,14 @@ const (
 const nonceBytes = "abcdef0123456789"
 
 type amcrest struct {
-	host       string
-	username   string
-	password   string
-	session    string
-	id         int
-	videocache map[string]bool
-	timezone   *time.Location
-	name       string
-	dbpath     string
+	host     string
+	username string
+	password string
+	session  string
+	id       int
+	cache    cache
+	timezone *time.Location
+	name     string
 }
 
 type telegram struct {
@@ -50,6 +46,99 @@ type event struct {
 	action string
 	code   string
 	time   string
+}
+
+type cache struct {
+	ProcessedFiles map[string]time.Time `json:"processed_files"`
+}
+
+func saveCache(c *cache, cachePath string) {
+	if cachePath == "" {
+		return
+	}
+	now := time.Now()
+	filtered := make(map[string]time.Time)
+	for filename, t := range c.ProcessedFiles {
+		if now.Sub(t) < 24*time.Hour {
+			filtered[filename] = t
+		}
+	}
+	c.ProcessedFiles = filtered
+
+	file, err := os.Create(cachePath)
+	if err != nil {
+		log.Printf("Error creating cache file: %v", err)
+		return
+	}
+	defer file.Close()
+
+	enc := json.NewEncoder(file)
+	if err := enc.Encode(c); err != nil {
+		log.Printf("Error encoding cache to JSON: %v", err)
+		return
+	}
+	if err := file.Sync(); err != nil {
+		log.Printf("Error syncing cache file: %v", err)
+		return
+	}
+	log.Printf("Cache saved to %s", cachePath)
+}
+
+// Load cache from JSON, keeping only files younger than 24h
+func loadCache(cachePath string) cache {
+	c := cache{ProcessedFiles: make(map[string]time.Time)}
+	if cachePath == "" {
+		return c
+	}
+	if fi, err := os.Stat(cachePath); err == nil && !fi.IsDir() {
+		file, err := os.Open(cachePath)
+		if err != nil {
+			log.Printf("Error opening cache file: %v", err)
+			return c
+		}
+		defer file.Close()
+		dec := json.NewDecoder(file)
+		if err := dec.Decode(&c); err != nil {
+			log.Printf("Error decoding cache JSON: %v", err)
+			return c
+		}
+		now := time.Now()
+		filtered := make(map[string]time.Time)
+		for filename, t := range c.ProcessedFiles {
+			if now.Sub(t) < 24*time.Hour {
+				filtered[filename] = t
+			}
+		}
+		c.ProcessedFiles = filtered
+	} else {
+		log.Printf("Cache file %s does not exist or is a directory, starting with an empty cache", cachePath)
+	}
+	return c
+}
+
+func getNewAmcrest() *amcrest {
+	tz, err := time.LoadLocation(getEnv("AMCREST_TIMEZONE", "UTC"))
+	if err != nil {
+		panic(err)
+	}
+
+	var cachePath = getEnv("AMCREST_CACHE_PATH", "")
+	if cachePath == "" {
+		panic("AMCREST_CACHE_PATH is not set")
+	}
+
+	a := amcrest{
+		getEnv("AMCREST_BASEURL", ""),
+		getEnv("AMCREST_USER", "admin"),
+		getEnv("AMCREST_PASSWORD", ""),
+		"",
+		2,
+		loadCache(cachePath),
+		tz,
+		getEnv("AMCREST_NAME", "Camera"),
+	}
+
+	return &a
 }
 
 func encryptPassword(username, password, random, realm string) string {
@@ -90,6 +179,8 @@ func (a *amcrest) authChallenge(uri, realm, nonce string) (string, string) {
 }
 
 func (a *amcrest) rcpPost(path string, data map[string]any) (*http.Response, error) {
+	data["id"] = a.id
+	data["session"] = a.session
 	json_data, err := json.Marshal(data)
 	if err != nil {
 		return nil, err
@@ -103,10 +194,8 @@ func (a *amcrest) setDeviceTime() {
 	localtime := time.Now().In(a.timezone).Format("2006-01-02 15:04:05")
 
 	resp, err := a.rcpPost("/RPC2", map[string]any{
-		"method":  "global.setCurrentTime",
-		"params":  map[string]any{"time": localtime, "tolerance": 5},
-		"id":      a.id,
-		"session": a.session,
+		"method": "global.setCurrentTime",
+		"params": map[string]any{"time": localtime, "tolerance": 5},
 	})
 	if err != nil {
 		panic(err)
@@ -126,14 +215,15 @@ func (a *amcrest) setDeviceTime() {
 }
 
 func (a *amcrest) login() {
+	if a.username == "" || a.password == "" || a.host == "" {
+		panic("Login, password or host is not set")
+	}
 
 	log.Println("Logging in")
 	// First request, to get the random bits
 	resp, err := a.rcpPost("/RPC2_Login", map[string]any{
-		"method":  "global.login",
-		"params":  map[string]any{"userName": a.username, "password": "", "clientType": "Web3.0", "loginType": "Direct"},
-		"id":      a.id,
-		"session": a.session,
+		"method": "global.login",
+		"params": map[string]any{"userName": a.username, "password": "", "clientType": "Web3.0", "loginType": "Direct"},
 	})
 
 	if err != nil {
@@ -159,10 +249,8 @@ func (a *amcrest) login() {
 
 	// second request, actual login
 	resp2, err := a.rcpPost("/RPC2_Login", map[string]any{
-		"method":  "global.login",
-		"params":  map[string]any{"userName": a.username, "password": hash, "clientType": "Web3.0", "loginType": "Direct"},
-		"id":      a.id,
-		"session": a.session,
+		"method": "global.login",
+		"params": map[string]any{"userName": a.username, "password": hash, "clientType": "Web3.0", "loginType": "Direct"},
 	})
 
 	if err != nil {
@@ -184,10 +272,8 @@ func (a *amcrest) login() {
 
 func (a *amcrest) getFileFindObject() (int, error) {
 	resp, err := a.rcpPost("/RPC2", map[string]any{
-		"method":  "mediaFileFind.factory.create",
-		"params":  nil,
-		"id":      a.id,
-		"session": a.session,
+		"method": "mediaFileFind.factory.create",
+		"params": nil,
 	})
 
 	if err != nil {
@@ -202,8 +288,6 @@ func (a *amcrest) getFileFindObject() (int, error) {
 		panic(err)
 	}
 	json.Unmarshal(body, &result)
-
-	log.Println(result)
 
 	return int(result["result"].(float64)), nil
 }
@@ -225,9 +309,7 @@ func (a *amcrest) hasFindFile(mediaFileFindFactory int, startTime string, endTim
 				"Flags":     []string{"Timing", "Event", "Event", "Manual"},
 			},
 		},
-		"id":      a.id,
-		"session": a.session,
-		"object":  mediaFileFindFactory,
+		"object": mediaFileFindFactory,
 	})
 
 	if err != nil {
@@ -246,55 +328,7 @@ func (a *amcrest) hasFindFile(mediaFileFindFactory int, startTime string, endTim
 	return result["result"].(bool)
 }
 
-func filenameExists(db *sql.DB, filename string) bool {
-	stmt, err := db.Prepare("SELECT * FROM processed_files WHERE filename = ?")
-	if err != nil {
-		fmt.Println(err)
-		return false
-	}
-	defer stmt.Close()
-	rows, err := stmt.Query(filename)
-	if err != nil {
-		fmt.Println(err)
-		return false
-	}
-	defer rows.Close()
-	return rows.Next()
-}
-
-func (a *amcrest) logProcessedFile(filename string) bool {
-	db, err := sql.Open("sqlite3", a.dbpath)
-
-	if err != nil {
-		fmt.Println(err)
-		return false
-	}
-	defer db.Close()
-
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS processed_files (filename TEXT);")
-	if err != nil {
-		fmt.Println(err)
-		return false
-	}
-
-	if !filenameExists(db, filename) {
-		stmt, err := db.Prepare("INSERT INTO processed_files(filename) VALUES(?)")
-		if err != nil {
-			fmt.Println(err)
-			return false
-		}
-		defer stmt.Close()
-		_, err = stmt.Exec(filename)
-		if err != nil {
-			fmt.Println(err)
-			return false
-		}
-		return false
-	}
-	return true
-}
-
-func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
+func (a *amcrest) getLatestFile(handler func(telegramMessage)) {
 	startDate := time.Now().Add(-12 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
 	endDate := time.Now().Add(12 * time.Hour).In(a.timezone).Format("2006-01-02 15:04:05")
 
@@ -314,9 +348,7 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 		"params": map[string]any{
 			"count": 100,
 		},
-		"id":      a.id,
-		"session": a.session,
-		"object":  mediaFileFindFactory,
+		"object": mediaFileFindFactory,
 	})
 
 	if err != nil {
@@ -336,12 +368,22 @@ func (a *amcrest) getLatestFile(handler func(telegramMessageType, string)) {
 	if result["result"].(bool) && result["params"].(map[string]any)["found"].(float64) > 0 {
 		for _, recording := range result["params"].(map[string]any)["infos"].([]any) {
 			path := recording.(map[string]any)["FilePath"].(string)
-			if _, ok := a.videocache[path]; !ok && !a.logProcessedFile(path) {
-				a.videocache[path] = true
-				file := a.downloadVideo(path)
-				handler(Video, file)
-				log.Printf("Sent %s\n", file)
+			if _, ok := a.cache.ProcessedFiles[path]; !ok {
+				a.cache.ProcessedFiles[path] = time.Now()
+				file, err := a.downloadVideo(path)
+				if err != nil {
+					log.Printf("Error downloading video: %v", err)
+					continue
+				}
+
+				handler(telegramMessage{
+					messageType: Video,
+					text:        parseVideoFilePath(path),
+					filepath:    file,
+				})
+				log.Printf("sent %s\n", file)
 				os.Remove(file)
+				saveCache(&a.cache, getEnv("AMCREST_CACHE_PATH", ""))
 			}
 		}
 	}
@@ -353,10 +395,10 @@ func parseWwwAuthenticate(header string) (string, string, string) {
 	return matches[1], matches[2], matches[3]
 }
 
-func (a *amcrest) downloadVideo(videopath string) string {
+func (a *amcrest) downloadVideo(videopath string) (string, error) {
 	file, err := os.CreateTemp("/tmp", "*.mp4")
 	if err != nil {
-		log.Println(err)
+		return "", err
 	}
 
 	defer file.Close()
@@ -365,16 +407,22 @@ func (a *amcrest) downloadVideo(videopath string) string {
 	uri := fmt.Sprintf("/cgi-bin/RPC_Loadfile%s", videopath)
 
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s%s", a.host, uri), nil)
+	if err != nil {
+		return "", err
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println(err)
+		return "", err
 	}
 
 	realm, nonce, opaque := parseWwwAuthenticate(resp.Header["Www-Authenticate"][0])
 	cnonce, challresp := a.authChallenge(uri, realm, nonce)
 
 	req, err = http.NewRequest("GET", fmt.Sprintf("%s%s", a.host, uri), nil)
+	if err != nil {
+		return "", err
+	}
 	authstr := fmt.Sprintf(
 		"Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", response=\"%s\", opaque=\"%s\", qop=auth, nc=%s, cnonce=\"%s\"",
 		a.username, realm, nonce, uri, challresp, opaque, "00000001", cnonce)
@@ -382,16 +430,16 @@ func (a *amcrest) downloadVideo(videopath string) string {
 
 	resp, err = client.Do(req)
 	if err != nil {
-		log.Println(err)
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	_, err = io.Copy(file, resp.Body)
 	if err != nil {
-		log.Println(err)
+		return "", err
 	}
-	log.Println(file.Name())
-	return file.Name()
+	log.Printf("downloaded %s as %s", videopath, file.Name())
+	return file.Name(), nil
 }
 
 func (a *amcrest) sendKeepAlive() {
@@ -402,10 +450,8 @@ func (a *amcrest) sendKeepAlive() {
 		}
 
 		resp, err := a.rcpPost("/RPC2", map[string]any{
-			"method":  "global.keepAlive",
-			"params":  map[string]any{"timeout": 300, "active": true},
-			"id":      a.id,
-			"session": a.session,
+			"method": "global.keepAlive",
+			"params": map[string]any{"timeout": 300, "active": true},
 		})
 
 		if err != nil {
@@ -428,22 +474,18 @@ func (a *amcrest) sendKeepAlive() {
 	}
 }
 
-func (a *amcrest) watchAlarms(handler func(telegramMessageType, string)) {
+func (a *amcrest) watchAlarms(handler func(telegramMessage)) {
 
 	// Instanciate event factory FIXME: useless?
 	a.rcpPost("/RPC2", map[string]any{
-		"method":  "eventManager.factory.instance",
-		"params":  nil,
-		"id":      a.id,
-		"session": a.session,
+		"method": "eventManager.factory.instance",
+		"params": nil,
 	})
 
 	// subscribe to videomotion
 	a.rcpPost("/RPC2", map[string]any{
-		"method":  "eventManager.attach",
-		"params":  map[string]any{"codes": []string{"VideoMotion"}},
-		"id":      a.id,
-		"session": a.session,
+		"method": "eventManager.attach",
+		"params": map[string]any{"codes": []string{"VideoMotion"}},
 	})
 
 	// Open stream
@@ -470,9 +512,12 @@ func (a *amcrest) watchAlarms(handler func(telegramMessageType, string)) {
 		if len(matches) == 2 {
 			events := parseEvent([]byte(r.FindStringSubmatch(string(buf))[1]))
 			for _, e := range events {
-				log.Println(e)
+				log.Printf("event: %v", e)
 				if !e.Equals(last_event) {
-					handler(Text, fmt.Sprintf("%s: %s %s %v", a.name, e.code, e.action, e.time))
+					handler(telegramMessage{
+						messageType: Text,
+						text:        fmt.Sprintf("%s: %s %s %v", a.name, e.code, e.action, e.time),
+					})
 					last_event = e
 				} else {
 					log.Printf("Duplicate event")
@@ -482,7 +527,8 @@ func (a *amcrest) watchAlarms(handler func(telegramMessageType, string)) {
 	}
 }
 
-func (a *amcrest) pollRecordingFiles(handler func(telegramMessageType, string)) {
+func (a *amcrest) pollRecordingFiles(handler func(telegramMessage)) {
+	a.getLatestFile(handler)
 	ticker := time.NewTicker(60 * time.Second)
 	for range ticker.C {
 		log.Println("Polling recording files")
@@ -491,6 +537,23 @@ func (a *amcrest) pollRecordingFiles(handler func(telegramMessageType, string)) 
 		}
 		a.getLatestFile(handler)
 	}
+}
+
+func parseVideoFilePath(path string) string {
+	r, err := regexp.Compile(`^/[^/]+/[^/]+/(\d{4}-\d{2}-\d{2})/(\d{3})/dav/(\d{2})/(\d{2}\.\d{2}\.\d{2})-(\d{2}\.\d{2}\.\d{2})\[(.)\]\[(\d)@(\d)\]\[(\d)\].mp4$`)
+	if err != nil {
+		log.Printf("Error compiling regex: %v", err)
+		return path
+	}
+	matches := r.FindStringSubmatch(path)
+	if len(matches) < 6 {
+		log.Printf("Error parsing video file path: %s %v", path, matches)
+		return path
+	}
+	date := matches[1]
+	timeStart := matches[4]
+	timeEnd := matches[5]
+	return fmt.Sprintf("%s - %s to %s", date, timeStart, timeEnd)
 }
 
 func parseEvent(msg []byte) []event {
@@ -536,15 +599,25 @@ func createVideoForm(filepath string) (string, io.Reader, error) {
 	return mp.FormDataContentType(), body, nil
 }
 
-func (t *telegram) telegramHandler(messageType telegramMessageType, msg string) {
-	if messageType == Text {
-		resp, err := http.Get(fmt.Sprintf("https://api.telegram.org/%s/sendMessage?chat_id=%s&text=%s", t.bot_key, t.chat_id, msg))
+type telegramMessage struct {
+	messageType telegramMessageType
+	text        string
+	filepath    string
+}
+
+func (t *telegram) telegramHandler(m telegramMessage) {
+	if t == nil {
+		log.Printf("no Telegram bot configured, skipping message %v: %s %s\n", m.messageType, m.text, m.filepath)
+		return
+	}
+	if m.messageType == Text {
+		resp, err := http.Get(fmt.Sprintf("https://api.telegram.org/%s/sendMessage?chat_id=%s&text=%s", t.bot_key, t.chat_id, m.text))
 		log.Printf("GET api.telegram.org message %d\n", resp.StatusCode)
 		if err != nil {
 			log.Printf("Telegram error: %v\n", err)
 		}
-	} else if messageType == Video {
-		ct, body, err := createVideoForm(msg)
+	} else if m.messageType == Video {
+		ct, body, err := createVideoForm(m.filepath)
 		if err != nil {
 			log.Println(err)
 		}
@@ -560,39 +633,26 @@ func (t *telegram) telegramHandler(messageType telegramMessageType, msg string) 
 func getEnv(key string, default_val string) string {
 	val := os.Getenv(key)
 	if val == "" {
-		if default_val == "" {
-			panic(fmt.Errorf("%s is not set", key))
-		}
 		return default_val
 	}
 	return val
 }
 
 func main() {
-	tz, err := time.LoadLocation(getEnv("AMCREST_TIMEZONE", "UTC"))
-	if err != nil {
-		panic(err)
-	}
-	var cam = amcrest{
-		getEnv("AMCREST_BASEURL", ""),
-		getEnv("AMCREST_USER", "admin"),
-		getEnv("AMCREST_PASSWORD", ""),
-		"",
-		2,
-		map[string]bool{},
-		tz,
-		getEnv("AMCREST_NAME", "Camera"),
-		getEnv("AMCREST_DB_PATH", ""),
-	}
+	var cam = getNewAmcrest()
 
 	cam.login()
 	cam.setDeviceTime()
 
 	go cam.sendKeepAlive()
 
-	var tel = telegram{
-		getEnv("TELEGRAM_BOT_KEY", ""),
-		getEnv("TELEGRAM_CHAT_ID", ""),
+	var tel *telegram
+
+	if getEnv("TELEGRAM_BOT_KEY", "") != "" && getEnv("TELEGRAM_CHAT_ID", "") != "" {
+		tel = &telegram{
+			getEnv("TELEGRAM_BOT_KEY", ""),
+			getEnv("TELEGRAM_CHAT_ID", ""),
+		}
 	}
 
 	go cam.pollRecordingFiles(tel.telegramHandler)
