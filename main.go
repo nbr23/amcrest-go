@@ -621,7 +621,7 @@ func (t *telegram) telegramHandler(m telegramMessage) {
 		if err != nil {
 			log.Println(err)
 		}
-		url := fmt.Sprintf("https://api.telegram.org/%s/sendVideo?chat_id=%s", t.bot_key, t.chat_id)
+		url := fmt.Sprintf("https://api.telegram.org/%s/sendVideo?chat_id=%s&caption=%s", t.bot_key, t.chat_id, m.text)
 		resp, err := http.Post(url, ct, body)
 		log.Printf("POST api.telegram.org video: %d\n", resp.StatusCode)
 		if err != nil {
